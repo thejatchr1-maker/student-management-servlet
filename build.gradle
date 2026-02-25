@@ -16,13 +16,89 @@ dependencies {
 
     implementation 'org.apache.logging.log4j:log4j-api:2.22.1'
     implementation 'org.apache.logging.log4j:log4j-core:2.22.1'
+
 }
 
 java {
     sourceCompatibility = JavaVersion.VERSION_17
     targetCompatibility = JavaVersion.VERSION_17
 }
+def tomcatHome = project.findProperty("tomcatHome")
+def contextName = project.findProperty("contextName") ?: "student"
 
-war {
-    archiveFileName = 'student.war'
+def webappsDir = file("${tomcatHome}/webapps")
+def deployedWar = file("${webappsDir}/${contextName}.war")
+def explodedDir = file("${webappsDir}/${contextName}")
+
+def isWindows = System.getProperty("os.name")
+        .toLowerCase()
+        .contains("windows")
+
+// ---------------- STOP TOMCAT ----------------
+tasks.register("stopTomcat", Exec) {
+
+    onlyIf { file(tomcatHome).exists() }
+
+    if (isWindows) {
+        commandLine "cmd", "/c",
+                "${tomcatHome}/bin/shutdown.bat"
+    } else {
+        commandLine "${tomcatHome}/bin/shutdown.sh"
+    }
+
+    ignoreExitValue = true
+}
+
+// ---------------- DELETE OLD WAR ----------------
+tasks.register("deleteOldWar") {
+    doLast {
+
+        println "Deleting old deployment..."
+
+        if (deployedWar.exists()) {
+            deployedWar.delete()
+            println "Deleted WAR: ${deployedWar.name}"
+        }
+
+        if (explodedDir.exists()) {
+            explodedDir.deleteDir()
+            println "Deleted exploded folder: ${explodedDir.name}"
+        }
+    }
+}
+
+// ---------------- COPY NEW WAR ----------------
+tasks.register("copyWarToTomcat", Copy) {
+
+    dependsOn tasks.war
+
+    from tasks.war.archiveFile
+    into webappsDir
+
+    rename { "${contextName}.war" }
+}
+
+// ---------------- START TOMCAT ----------------
+tasks.register("startTomcat", Exec) {
+
+    onlyIf { file(tomcatHome).exists() }
+
+    if (isWindows) {
+        commandLine "cmd", "/c",
+                "${tomcatHome}/bin/startup.bat"
+    } else {
+        commandLine "${tomcatHome}/bin/startup.sh"
+    }
+
+    ignoreExitValue = true
+}
+
+// ---------------- PIPELINE ----------------
+tasks.named("build") {
+    finalizedBy(
+            "stopTomcat",
+            "deleteOldWar",
+            "copyWarToTomcat",
+            "startTomcat"
+    )
 }
